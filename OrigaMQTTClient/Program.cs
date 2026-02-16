@@ -39,21 +39,31 @@ class Program
 
         // Subscribe to Predefined Message Response
         await client.SubscribeAsync("vdv/test/predefined_message/response");
-        Console.WriteLine("✅ Subscribed → vdv/test/predefined_message/response");
 
-        // NEW: Subscribe to new message topics
-        // Note: These handlers currently don't send a response back in the code I wrote (just log/process), 
-        // but subscribing anyway in case you add responses later.
+        // Subscribe to Technical Vehicle LogOn/LogOff Responses
+        await client.SubscribeAsync("vdv/test/technical_login/response");
+        await client.SubscribeAsync("vdv/test/technical_logout/response");
+
+        Console.WriteLine("✅ Subscribed to all response topics");
 
         // --- TEST FLOW ---
         Console.WriteLine("\n🚀 STARTING TESTS...\n");
 
+        // Technical LogOn/LogOff (NEW)
+        await SendTechnicalLogOnRequest(client);
+        await Task.Delay(1000);
+
+        await SendTechnicalLogOffRequest(client);
+        await Task.Delay(1000);
+
+        // Driver LogOn/LogOff
         await SendLogOnRequest(client);
         await Task.Delay(1000);
 
         await SendLogOffRequest(client);
         await Task.Delay(1000);
 
+        // Operational LogOn/LogOff
         await SendOperationalLogOnRequest(client);
         await Task.Delay(1000);
 
@@ -68,8 +78,6 @@ class Program
         await SendGnssPhysicalPositionRequest(client);
         await Task.Delay(1000);
 
-        // --- NEW TESTS ---
-
         // Live Announcement
         await SendLiveAnnouncementRequest(client);
         await Task.Delay(1000);
@@ -80,12 +88,55 @@ class Program
 
         // Distress Call
         await SendDistressCallRequest(client);
-        await Task.Delay(1000);
 
 
         Console.WriteLine("\n👂 Listening for responses (Press Ctrl+C to quit)...\n");
         await Task.Delay(-1);
     }
+
+    // ---------------- NEW: TECHNICAL VEHICLE LOGON / LOGOFF ----------------
+
+    static async Task SendTechnicalLogOnRequest(IMqttClient client)
+    {
+        var topic = "vdv/test/technical_login";
+        var payload = BuildTechnicalLogOnXml("de:mvg:5812", "obu-123", "2025-08-14.1");
+        await PublishAsync(client, topic, payload);
+        Console.WriteLine("✅ Technical LogOn Request Sent");
+    }
+
+    static async Task SendTechnicalLogOffRequest(IMqttClient client)
+    {
+        var topic = "vdv/test/technical_logout";
+        var payload = BuildTechnicalLogOffXml("de:mvg:5812");
+        await PublishAsync(client, topic, payload);
+        Console.WriteLine("✅ Technical LogOff Request Sent");
+    }
+
+    static string BuildTechnicalLogOnXml(string vehicleRef, string obuId, string baseVersion) => $"""
+<TechnicalVehicleLogOnRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
+    <Timestamp>{UtcNow()}</Timestamp>
+    <Version>1.0</Version>
+    <MessageId>{Guid.NewGuid()}</MessageId>
+    <netex:VehicleRef ref="{vehicleRef}" nameOfRefClass="Vehicle" version="1.0" />
+    <OnboardUnitId>{obuId}</OnboardUnitId>
+    <BaseVersion>{baseVersion}</BaseVersion>
+    <Extensions>
+        <VendorExtension>dummy-value</VendorExtension>
+    </Extensions>
+</TechnicalVehicleLogOnRequestStructure>
+""";
+
+    static string BuildTechnicalLogOffXml(string vehicleRef) => $"""
+<TechnicalVehicleLogOffRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
+    <Timestamp>{UtcNow()}</Timestamp>
+    <Version>1.0</Version>
+    <MessageId>{Guid.NewGuid()}</MessageId>
+    <netex:VehicleRef ref="{vehicleRef}" version="1.0" />
+    <Extensions>
+        <VendorExtension>dummy-value</VendorExtension>
+    </Extensions>
+</TechnicalVehicleLogOffRequestStructure>
+""";
 
     // ---------------- NEW: LIVE ANNOUNCEMENT ----------------
 
