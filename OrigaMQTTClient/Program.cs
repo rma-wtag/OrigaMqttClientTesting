@@ -1,23 +1,28 @@
 ﻿using MQTTnet;
-using System.Text;
 
 class Program
 {
+    // === TEST CONFIGURATION ===
+    const string CountryCode = "DE";
+    const string OrgCode = "MVG";
+    const string ItcsId = "ITCS001";
+    const string TestVehicleId = "de:mvg:5812";
+    const string TestDriverId = "de:mvg:abc";
+
     static async Task Main(string[] args)
     {
-        var factory = new MqttClientFactory(); // v5: MqttClientFactory, not MqttFactory
+        var factory = new MqttClientFactory();
 
         var options = new MqttClientOptionsBuilder()
             .WithTcpServer("localhost", 1883)
-            .WithClientId($"test-client-{Guid.NewGuid()}")
-            .WithCleanSession()
+            .WithClientId($"test-drive-{Guid.NewGuid()}")
+            .WithCleanSession(false) // Drive: cleanSession=false to not miss live notifications
             .Build();
 
         var client = factory.CreateMqttClient();
 
         client.ApplicationMessageReceivedAsync += e =>
         {
-            // v5: use ConvertPayloadToString() instead of PayloadSegment
             var payload = e.ApplicationMessage.ConvertPayloadToString() ?? string.Empty;
 
             Console.WriteLine("✅ RESPONSE RECEIVED:");
@@ -43,19 +48,26 @@ class Program
         Console.WriteLine("Connecting to broker...");
         await client.ConnectAsync(options, CancellationToken.None);
 
-        // --- SUBSCRIPTIONS ---
+        // --- SUBSCRIPTIONS (Drive subscribes to VehicleInbox responses) ---
+        // Using the broad wildcard subscription from the spec:
+        // IoM/1.0/DataVersion/+/Inbox/VehicleInbox/Country/<code>/+/Organisation/<operator code>/+/VehicleId/<ID>/#
         var subscribeOptions = factory.CreateSubscribeOptionsBuilder()
-            .WithTopicFilter(f => f.WithTopic("vdv/test/login/response").WithAtLeastOnceQoS())
-            .WithTopicFilter(f => f.WithTopic("vdv/test/logout/response").WithAtLeastOnceQoS())
-            .WithTopicFilter(f => f.WithTopic("vdv/test/operational_login/response").WithAtLeastOnceQoS())
-            .WithTopicFilter(f => f.WithTopic("vdv/test/operational_logout/response").WithAtLeastOnceQoS())
-            .WithTopicFilter(f => f.WithTopic("vdv/test/predefined_message/response").WithAtLeastOnceQoS())
-            .WithTopicFilter(f => f.WithTopic("vdv/test/technical_login/response").WithAtLeastOnceQoS())
-            .WithTopicFilter(f => f.WithTopic("vdv/test/technical_logout/response").WithAtLeastOnceQoS())
+            // Broad subscription to catch all VehicleInbox responses
+            .WithTopicFilter(f => f
+                .WithTopic($"IoM/1.0/DataVersion/+/Inbox/VehicleInbox/Country/{CountryCode}/+/Organisation/{OrgCode}/+/VehicleId/+/#")
+                .WithAtLeastOnceQoS())
+            // LiveAnnouncement (Dispo -> Drive, subscribe only for Drive)
+            .WithTopicFilter(f => f
+                .WithTopic($"IoM/1.0/DataVersion/+/Inbox/ItcsInbox/Country/{CountryCode}/+/Organisation/{OrgCode}/+/ItcsId/{ItcsId}/LiveAnnouncementData")
+                .WithAtLeastOnceQoS())
+            // Notification (Dispo -> Drive, subscribe only for Drive)
+            .WithTopicFilter(f => f
+                .WithTopic($"IoM/1.0/DataVersion/+/Inbox/ItcsInbox/Country/{CountryCode}/+/Organisation/{OrgCode}/+/ItcsId/{ItcsId}/NotificationData")
+                .WithAtLeastOnceQoS())
             .Build();
 
         await client.SubscribeAsync(subscribeOptions, CancellationToken.None);
-        Console.WriteLine("✅ Subscribed to all response topics");
+        Console.WriteLine("✅ Subscribed to VehicleInbox response topics, LiveAnnouncement, and Notification");
 
         // --- TEST FLOW ---
         Console.WriteLine("\n🚀 STARTING TESTS...\n");
@@ -84,26 +96,43 @@ class Program
         await SendGnssPhysicalPositionRequest(client);
         await Task.Delay(1000);
 
-        await SendLiveAnnouncementRequest(client);
-        await Task.Delay(1000);
-
-        await SendNotificationResponse(client);
-        await Task.Delay(1000);
-
         await SendDistressCallRequest(client);
+        await Task.Delay(1000);
+
+        // NOTE: LiveAnnouncement and Notification are PUBLISH-ONLY from Dispo.
+        // The test client (Drive) subscribes to them but cannot trigger them.
+        // They would need to be triggered from the Dispo side (e.g., via gRPC).
+        Console.WriteLine("ℹ️  LiveAnnouncement & Notification are Dispo-published — test client can only receive them.");
 
         Console.WriteLine("\n👂 Listening for responses (Press Ctrl+C to quit)...\n");
         await Task.Delay(-1);
     }
 
-    // ---------------- SHARED PUBLISHER ----------------
+    // ---------------- SHARED HELPERS ----------------
 
-    static async Task PublishAsync(IMqttClient client, string topic, string payload)
+    /// <summary>
+    /// Builds the ItcsInbox publish topic for Drive -> Dispo request messages.
+    /// Pattern: IoM/1.0/DataVersion/1.0/Inbox/ItcsInbox/Country/{code}/any/Organisation/{opCode}/any/ItcsId/{itcsId}/CorrelationId/{correlationId}/{dataSuffix}
+    /// </summary>
+    static string BuildItcsInboxTopic(string correlationId, string dataSuffix)
     {
+        return $"IoM/1.0/DataVersion/1.0/Inbox/ItcsInbox/Country/{CountryCode}/any/Organisation/{OrgCode}/any/ItcsId/{ItcsId}/CorrelationId/{correlationId}/{dataSuffix}";
+    }
+
+    static async Task PublishAsync(IMqttClient client, string topic, string payload, int qos = 1, bool retain = false)
+    {
+        var qosLevel = qos switch
+        {
+            0 => MQTTnet.Protocol.MqttQualityOfServiceLevel.AtMostOnce,
+            2 => MQTTnet.Protocol.MqttQualityOfServiceLevel.ExactlyOnce,
+            _ => MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce
+        };
+
         var message = new MqttApplicationMessageBuilder()
             .WithTopic(topic)
             .WithPayload(payload)
-            .WithQualityOfServiceLevel(MQTTnet.Protocol.MqttQualityOfServiceLevel.AtLeastOnce)
+            .WithQualityOfServiceLevel(qosLevel)
+            .WithRetainFlag(retain)
             .Build();
 
         await client.PublishAsync(message, CancellationToken.None);
@@ -113,85 +142,85 @@ class Program
 
     static async Task SendTechnicalLogOnRequest(IMqttClient client)
     {
-        await PublishAsync(client, "vdv/test/technical_login", BuildTechnicalLogOnXml("de:mvg:5812", "obu-123", "2025-08-14.1"));
-        Console.WriteLine("✅ Technical LogOn Request Sent");
+        var corrId = Guid.NewGuid().ToString();
+        var topic = BuildItcsInboxTopic(corrId, "TechnicalVehicleLogOnRequestData");
+        await PublishAsync(client, topic, BuildTechnicalLogOnXml(TestVehicleId, "obu-123", "2025-08-14.1"), qos: 1);
+        Console.WriteLine($"✅ Technical LogOn Request Sent (CorrelationId: {corrId})");
     }
 
     static async Task SendTechnicalLogOffRequest(IMqttClient client)
     {
-        await PublishAsync(client, "vdv/test/technical_logout", BuildTechnicalLogOffXml("de:mvg:5812"));
-        Console.WriteLine("✅ Technical LogOff Request Sent");
+        var corrId = Guid.NewGuid().ToString();
+        var topic = BuildItcsInboxTopic(corrId, "TechnicalVehicleLogOffRequestData");
+        await PublishAsync(client, topic, BuildTechnicalLogOffXml(TestVehicleId), qos: 1);
+        Console.WriteLine($"✅ Technical LogOff Request Sent (CorrelationId: {corrId})");
     }
 
     // ---------------- DRIVER LOGON / LOGOFF ----------------
 
     static async Task SendLogOnRequest(IMqttClient client)
     {
-        await PublishAsync(client, "vdv/test/login", BuildLogOnXml("de:mvg:5812", "de:mvg:abc"));
-        Console.WriteLine("✅ LogOn Request Sent");
+        var corrId = Guid.NewGuid().ToString();
+        var topic = BuildItcsInboxTopic(corrId, "DriverVehicleLogOnRequestData");
+        await PublishAsync(client, topic, BuildLogOnXml(TestVehicleId, TestDriverId), qos: 1);
+        Console.WriteLine($"✅ Driver LogOn Request Sent (CorrelationId: {corrId})");
     }
 
     static async Task SendLogOffRequest(IMqttClient client)
     {
-        await PublishAsync(client, "vdv/test/logout", BuildLogOffXml("de:mvg:5812", "de:mvg:abc"));
-        Console.WriteLine("✅ LogOff Request Sent");
+        var corrId = Guid.NewGuid().ToString();
+        var topic = BuildItcsInboxTopic(corrId, "DriverVehicleLogOffRequestData");
+        await PublishAsync(client, topic, BuildLogOffXml(TestVehicleId, TestDriverId), qos: 1);
+        Console.WriteLine($"✅ Driver LogOff Request Sent (CorrelationId: {corrId})");
     }
 
     // ---------------- OPERATIONAL LOGON / LOGOFF ----------------
 
     static async Task SendOperationalLogOnRequest(IMqttClient client)
     {
-        await PublishAsync(client, "vdv/test/operational_login", BuildOperationalLogOnXml(
-            "de:mvg:1234", "vehicleJourney:12345", "operatingDay:67890", "block:54321", "de:mvg:12345"));
-        Console.WriteLine("✅ Operational LogOn Request Sent");
+        var corrId = Guid.NewGuid().ToString();
+        var topic = BuildItcsInboxTopic(corrId, "OperationalVehicleLogOnRequestData");
+        await PublishAsync(client, topic, BuildOperationalLogOnXml(
+            "de:mvg:1234", "vehicleJourney:12345", "operatingDay:67890", "block:54321", "de:mvg:12345"), qos: 1);
+        Console.WriteLine($"✅ Operational LogOn Request Sent (CorrelationId: {corrId})");
     }
 
     static async Task SendOperationalLogOffRequest(IMqttClient client)
     {
-        await PublishAsync(client, "vdv/test/operational_logout", BuildOperationalLogOffXml(
-            "de:mvg:1234", "vehicleJourney:12345", "operatingDay:67890", "block:54321", "de:mvg:12345"));
-        Console.WriteLine("✅ Operational LogOff Request Sent");
+        var corrId = Guid.NewGuid().ToString();
+        var topic = BuildItcsInboxTopic(corrId, "OperationalVehicleLogOffRequestData");
+        await PublishAsync(client, topic, BuildOperationalLogOffXml(
+            "de:mvg:1234", "vehicleJourney:12345", "operatingDay:67890", "block:54321", "de:mvg:12345"), qos: 1);
+        Console.WriteLine($"✅ Operational LogOff Request Sent (CorrelationId: {corrId})");
     }
 
     // ---------------- PREDEFINED MESSAGE ----------------
 
     static async Task SendPredefinedMessageRequest(IMqttClient client)
     {
-        await PublishAsync(client, "vdv/test/predefined_message", BuildPredefinedMessageXml("10", "Traffic Jam - 10 min delay"));
-        Console.WriteLine("✅ Predefined Message Request Sent");
+        var corrId = Guid.NewGuid().ToString();
+        var topic = BuildItcsInboxTopic(corrId, "PredefinedMessageRequestData");
+        await PublishAsync(client, topic, BuildPredefinedMessageXml("10", "Traffic Jam - 10 min delay"), qos: 1);
+        Console.WriteLine($"✅ Predefined Message Request Sent (CorrelationId: {corrId})");
     }
 
-    // ---------------- GNSS ----------------
+    // ---------------- GNSS (QoS 0, Retain=true) ----------------
 
     static async Task SendGnssPhysicalPositionRequest(IMqttClient client)
     {
-        var topic = "IoM/1.0/DataVersion/1.0/Country/DE/BE/Organisation/MVG/100/Vehicle/BUS/1234/PhysicalPosition/GnssPhysicalPositionData";
-        await PublishAsync(client, topic, BuildGnssPhysicalPositionXml());
-        Console.WriteLine("✅ GnssPhysicalPosition Request Sent");
-    }
-
-    // ---------------- LIVE ANNOUNCEMENT ----------------
-
-    static async Task SendLiveAnnouncementRequest(IMqttClient client)
-    {
-        await PublishAsync(client, "vdv/test/announcement", BuildLiveAnnouncementXml("123", "https://url_to_audio_file"));
-        Console.WriteLine("✅ Live Announcement Request Sent");
-    }
-
-    // ---------------- NOTIFICATION ----------------
-
-    static async Task SendNotificationResponse(IMqttClient client)
-    {
-        await PublishAsync(client, "vdv/test/notification", BuildNotificationResponseXml("123", "Experiencing delay due to traffic"));
-        Console.WriteLine("✅ Notification Response Sent");
+        var topic = $"IoM/1.0/DataVersion/1.0/Country/{CountryCode}/any/Organisation/{OrgCode}/any/Vehicle/{TestVehicleId}/any/PhysicalPosition/GnssPhysicalPositionData";
+        await PublishAsync(client, topic, BuildGnssPhysicalPositionXml(), qos: 0, retain: true);
+        Console.WriteLine("✅ GnssPhysicalPosition Sent (QoS 0, Retain=true)");
     }
 
     // ---------------- DISTRESS CALL ----------------
 
     static async Task SendDistressCallRequest(IMqttClient client)
     {
-        await PublishAsync(client, "vdv/test/distress", BuildDistressCallRequestXml());
-        Console.WriteLine("✅ Distress Call Request Sent");
+        var corrId = Guid.NewGuid().ToString();
+        var topic = BuildItcsInboxTopic(corrId, "DistressCallRequestData");
+        await PublishAsync(client, topic, BuildDistressCallRequestXml(), qos: 1);
+        Console.WriteLine($"✅ Distress Call Request Sent (CorrelationId: {corrId})");
     }
 
     // ---------------- XML BUILDERS ----------------
@@ -296,23 +325,6 @@ class Program
     </GnssPhysicalPosition>
     <Extensions/>
 </GnssPhysicalPositionDataStructure>
-""";
-
-    static string BuildLiveAnnouncementXml(string announcementId, string contentUrl) => $"""
-<ReceivedAnnouncement xmlns:xs="http://www.w3.org/2001/XMLSchema" xs:version="1.0" xs:dateTime="{UtcNow()}">
-    <MessageId>{Guid.NewGuid()}</MessageId>
-    <Announcement id="{announcementId}" content="{contentUrl}"/>
-</ReceivedAnnouncement>
-""";
-
-    static string BuildNotificationResponseXml(string notificationId, string description) => $"""
-<NotificationResponse xmlns:xs="http://www.w3.org/2001/XMLSchema" xs:version="1.0" xs:dateTime="{UtcNow()}">
-    <MessageId>{Guid.NewGuid()}</MessageId>
-    <Notification id="{notificationId}">
-        <Description>{description}</Description>
-        <SentTime>{UtcNow()}</SentTime>
-    </Notification>
-</NotificationResponse>
 """;
 
     static string BuildDistressCallRequestXml() => $"""
