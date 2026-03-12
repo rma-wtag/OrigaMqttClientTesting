@@ -73,29 +73,29 @@ class Program
         await SendTechnicalLogOnRequest(client);
         await Task.Delay(1000);
 
-        await SendTechnicalLogOffRequest(client);
-        await Task.Delay(1000);
+        //await SendTechnicalLogOffRequest(client);
+        //await Task.Delay(1000);
 
-        await SendLogOnRequest(client);
-        await Task.Delay(1000);
+        //await SendLogOnRequest(client);
+        //await Task.Delay(1000);
 
-        await SendLogOffRequest(client);
-        await Task.Delay(1000);
+        //await SendLogOffRequest(client);
+        //await Task.Delay(1000);
 
-        await SendOperationalLogOnRequest(client);
-        await Task.Delay(1000);
+        //await SendOperationalLogOnRequest(client);
+        //await Task.Delay(1000);
 
-        await SendOperationalLogOffRequest(client);
-        await Task.Delay(1000);
+        //await SendOperationalLogOffRequest(client);
+        //await Task.Delay(1000);
 
-        await SendPredefinedMessageRequest(client);
-        await Task.Delay(1000);
+        //await SendPredefinedMessageRequest(client);
+        //await Task.Delay(1000);
 
-        await SendGnssPhysicalPositionRequest(client);
-        await Task.Delay(1000);
+        //await SendGnssPhysicalPositionRequest(client);
+        //await Task.Delay(1000);
 
-        await SendDistressCallRequest(client);
-        await Task.Delay(1000);
+        //await SendDistressCallRequest(client);
+        //await Task.Delay(1000);
 
         // NOTE: LiveAnnouncement and Notification are PUBLISH-ONLY from Dispo.
         // The test client (Drive) subscribes to them but cannot trigger them.
@@ -141,7 +141,17 @@ class Program
     {
         var messageId = Guid.NewGuid().ToString();
         var topic = BuildItcsInboxTopic(messageId, "TechnicalVehicleLogOnRequestData");
-        await PublishAsync(client, topic, BuildTechnicalLogOnXml(messageId, TestVehicleId, "obu-123", "2025-08-14.1"), qos: 1);
+        var payload = BuildTechnicalLogOnXml(
+            messageId: messageId,
+            vehicleRef: TestVehicleId,
+            obuId: "onboard-unit-id-123",
+            serialNumber: "10-1122",
+            softwareVersion: "1.1.115",
+            deviceName: "Origa-OBU-Terminal-A",
+            deviceVdvVersion: "1.0.0",
+            currentLocationTitle: "Mohakhali"
+        );
+        await PublishAsync(client, topic, payload, qos: 1);
         Console.WriteLine($"✅ Technical LogOn Request Sent (MessageId/CorrelationId: {messageId})");
     }
 
@@ -149,7 +159,11 @@ class Program
     {
         var messageId = Guid.NewGuid().ToString();
         var topic = BuildItcsInboxTopic(messageId, "TechnicalVehicleLogOffRequestData");
-        await PublishAsync(client, topic, BuildTechnicalLogOffXml(messageId, TestVehicleId), qos: 1);
+        var obuId = "onboard-unit-id-123";
+        var token = "05eb6d66-ca14-4dfb-9ad0-2d23cc0a6cc1";
+        var payload = BuildTechnicalLogOffXml(messageId, TestVehicleId, obuId, token);
+
+        await PublishAsync(client, topic, payload, qos: 1);
         Console.WriteLine($"✅ Technical LogOff Request Sent (MessageId/CorrelationId: {messageId})");
     }
 
@@ -223,23 +237,44 @@ class Program
     // ---------------- XML BUILDERS ----------------
     // MessageId is now generated ONCE and passed in — same value goes into both topic and payload
 
-    static string BuildTechnicalLogOnXml(string messageId, string vehicleRef, string obuId, string baseVersion) => $"""
+    static string BuildTechnicalLogOnXml(
+        string messageId,
+        string vehicleRef,
+        string obuId,
+        string serialNumber,
+        string softwareVersion,
+        string deviceName,
+        string deviceVdvVersion,
+        string currentLocationTitle) => $"""
 <TechnicalVehicleLogOnRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
     <Timestamp>{UtcNow()}</Timestamp>
     <Version>1.0</Version>
     <MessageId>{messageId}</MessageId>
     <netex:VehicleRef ref="{vehicleRef}" nameOfRefClass="Vehicle" version="1.0" />
     <OnboardUnitId>{obuId}</OnboardUnitId>
-    <DataVersion>{baseVersion}</DataVersion>
+    <Extensions>
+        <SerialNumber>{serialNumber}</SerialNumber>
+        <SoftwareVersion>{softwareVersion}</SoftwareVersion>
+        <DeviceName>{deviceName}</DeviceName>
+        <DeviceVdvVersion>{deviceVdvVersion}</DeviceVdvVersion>
+        <CurrentLocationTitle>{currentLocationTitle}</CurrentLocationTitle>
+    </Extensions>
 </TechnicalVehicleLogOnRequestStructure>
 """;
 
-    static string BuildTechnicalLogOffXml(string messageId, string vehicleRef) => $"""
+    static string BuildTechnicalLogOffXml(string messageId,
+        string vehicleRef,
+        string obuId,
+        string token) => $"""
 <TechnicalVehicleLogOffRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
     <Timestamp>{UtcNow()}</Timestamp>
     <Version>1.0</Version>
     <MessageId>{messageId}</MessageId>
     <netex:VehicleRef ref="{vehicleRef}" version="1.0" />
+    <OnboardUnitId>{obuId}</OnboardUnitId>
+   <Extensions>
+        <Token>{token}</Token>
+   </Extensions>
 </TechnicalVehicleLogOffRequestStructure>
 """;
 
