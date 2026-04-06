@@ -6,7 +6,7 @@ class Program
     const string CountryCode = "DE";
     const string OrgCode = "MVG";
     const string ItcsId = "ITCS001";
-    const string TestVehicleId = "de:mvg:5812";
+    const string TestVehicleId = "de:mvg:1234";
     const string TestDriverId = "de:mvg:abc";
 
     static async Task Main(string[] args)
@@ -144,7 +144,7 @@ class Program
         var payload = BuildTechnicalLogOnXml(
             messageId: messageId,
             vehicleRef: TestVehicleId,
-            obuId: "onboard-unit-id-123",
+            obuId: "onboard-unit-id-124",
             serialNumber: "10-1122",
             softwareVersion: "1.1.115",
             deviceName: "Origa-OBU-Terminal-A",
@@ -160,8 +160,7 @@ class Program
         var messageId = Guid.NewGuid().ToString();
         var topic = BuildItcsInboxTopic(messageId, "TechnicalVehicleLogOffRequestData");
         var obuId = "onboard-unit-id-123";
-        var token = "05eb6d66-ca14-4dfb-9ad0-2d23cc0a6cc1";
-        var payload = BuildTechnicalLogOffXml(messageId, TestVehicleId, obuId, token);
+        var payload = BuildTechnicalLogOffXml(messageId, TestVehicleId, obuId);
 
         await PublishAsync(client, topic, payload, qos: 1);
         Console.WriteLine($"✅ Technical LogOff Request Sent (MessageId/CorrelationId: {messageId})");
@@ -173,8 +172,7 @@ class Program
     {
         var messageId = Guid.NewGuid().ToString();
         var topic = BuildItcsInboxTopic(messageId, "DriverVehicleLogOnRequestData");
-        var token = "286b32d6-be5d-4156-96ea-4f2d936d7e1e";
-        await PublishAsync(client, topic, BuildLogOnXml(messageId, TestVehicleId, TestDriverId, token), qos: 1);
+        await PublishAsync(client, topic, BuildLogOnXml(messageId, TestVehicleId, TestDriverId), qos: 1);
         Console.WriteLine($"✅ Driver LogOn Request Sent (MessageId/CorrelationId: {messageId})");
     }
 
@@ -182,8 +180,7 @@ class Program
     {
         var messageId = Guid.NewGuid().ToString();
         var topic = BuildItcsInboxTopic(messageId, "DriverVehicleLogOffRequestData");
-        var token = "1db7c36b-a4e8-49c0-adc2-7f3a13117adc";
-        await PublishAsync(client, topic, BuildLogOffXml(messageId, TestVehicleId, TestDriverId, token), qos: 1);
+        await PublishAsync(client, topic, BuildLogOffXml(messageId, TestVehicleId, TestDriverId), qos: 1);
         Console.WriteLine($"✅ Driver LogOff Request Sent (MessageId/CorrelationId: {messageId})");
     }
 
@@ -192,33 +189,46 @@ class Program
     static async Task SendOperationalLogOnRequest(IMqttClient client)
     {
         var messageId = Guid.NewGuid().ToString();
+
+        // Ensure your BuildItcsInboxTopic generates the correct topic for LogOn
         var topic = BuildItcsInboxTopic(messageId, "OperationalVehicleLogOnRequestData");
 
-        string vehicleRef = "de:mvg:5812";
-        string vehicleJourneyRef = "1000017";
+        string vehicleRef = "de:mvg:1234";
+        string vehicleJourneyRef = "1008017";
         string operatingDayRef = "2022-10-03";
-        string blockRef = "B-20504";
-        string journeyPatternRef = "de:xyz:1000017";
-
+        string blockRef = "B-20531";
 
         await PublishAsync(client, topic, BuildOperationalLogOnXml(
-        messageId,
-        vehicleRef,
-        vehicleJourneyRef,
-        operatingDayRef,
-        blockRef,
-        journeyPatternRef), qos: 1);
+            messageId,
+            vehicleRef,
+            vehicleJourneyRef,
+            operatingDayRef,
+            blockRef), qos: 1);
 
-        Console.WriteLine($"✅ Operational LogOn Request Sent (MessageId/CorrelationId: {messageId})");
+        Console.WriteLine($"✅ Operational LogOn Request Sent (MessageId: {messageId})");
     }
 
     static async Task SendOperationalLogOffRequest(IMqttClient client)
     {
         var messageId = Guid.NewGuid().ToString();
+
+        // Ensure your BuildItcsInboxTopic is passing the correct DataType for LogOff
         var topic = BuildItcsInboxTopic(messageId, "OperationalVehicleLogOffRequestData");
+
+        // Must match the LogOn data exactly so the backend finds the correct active trip to close!
+        string vehicleRef = "de:mvg:5812";
+        string vehicleJourneyRef = "1000017";
+        string operatingDayRef = "2022-10-03";
+        string blockRef = "B-20504";
+
         await PublishAsync(client, topic, BuildOperationalLogOffXml(
-            messageId, "de:mvg:1234", "vehicleJourney:12345", "operatingDay:67890", "block:54321", "de:mvg:12345"), qos: 1);
-        Console.WriteLine($"✅ Operational LogOff Request Sent (MessageId/CorrelationId: {messageId})");
+            messageId,
+            vehicleRef,
+            vehicleJourneyRef,
+            operatingDayRef,
+            blockRef), qos: 1);
+
+        Console.WriteLine($"✅ Operational LogOff Request Sent (MessageId: {messageId})");
     }
 
     // ---------------- PREDEFINED MESSAGE ----------------
@@ -238,7 +248,7 @@ class Program
         var topic = $"IoM/1.0/DataVersion/1.0/Country/{CountryCode}/any/Organisation/{OrgCode}/any/Vehicle/{TestVehicleId}/any/PhysicalPosition/GnssPhysicalPositionData";
 
         // The exact PublisherId generated by your LogOn service
-        string publisherId = "6fa40608-2a9b-49ba-81ca-00ecbf562a3d";
+        string publisherId = "e4304a43-4729-4732-a0cc-e6781c046643";
 
         // Pass the publisherId into your XML builder
         await PublishAsync(client, topic, BuildGnssPhysicalPositionXml(publisherId), qos: 0, retain: true);
@@ -286,8 +296,7 @@ class Program
 
     static string BuildTechnicalLogOffXml(string messageId,
         string vehicleRef,
-        string obuId,
-        string token) => $"""
+        string obuId) => $"""
 <TechnicalVehicleLogOffRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
     <Timestamp>{UtcNow()}</Timestamp>
     <Version>1.0</Version>
@@ -295,12 +304,11 @@ class Program
     <netex:VehicleRef ref="{vehicleRef}" version="1.0" />
     <OnboardUnitId>{obuId}</OnboardUnitId>
    <Extensions>
-        <Token>{token}</Token>
    </Extensions>
 </TechnicalVehicleLogOffRequestStructure>
 """;
 
-    static string BuildLogOnXml(string messageId, string vehicleRef, string driverRef, string token) => $"""
+    static string BuildLogOnXml(string messageId, string vehicleRef, string driverRef) => $"""
 <DriverVehicleLogOnRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
     <Timestamp>{UtcNow()}</Timestamp>
     <Version>1.0</Version>
@@ -308,12 +316,11 @@ class Program
     <netex:VehicleRef ref="{vehicleRef}" version="1.0"/>
     <netex:DriverRef ref="{driverRef}" version="1.0"/>
     <Extensions>
-        <Token>{token}</Token>
     </Extensions>
 </DriverVehicleLogOnRequestStructure>
 """;
 
-    static string BuildLogOffXml(string messageId, string vehicleRef, string driverRef, string token) => $"""
+    static string BuildLogOffXml(string messageId, string vehicleRef, string driverRef) => $"""
 <DriverVehicleLogOffRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
     <Timestamp>{UtcNow()}</Timestamp>
     <Version>1.0</Version>
@@ -321,41 +328,37 @@ class Program
     <netex:VehicleRef ref="{vehicleRef}" version="1.0"/>
     <netex:DriverRef ref="{driverRef}" version="1.0"/>
     <Extensions>
-        <Token>{token}</Token>
     </Extensions>
 </DriverVehicleLogOffRequestStructure>
 """;
 
-    static string BuildOperationalLogOnXml(string messageId, string vehicleRef, string vehicleJourneyRef, string operatingDayRef, string blockRef, string journeyPatternRef) =>
+    static string BuildOperationalLogOnXml(string messageId, string vehicleRef, string vehicleJourneyRef, string operatingDayRef, string blockRef) =>
 $"""
 <OperationalVehicleLogOnRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
     <Timestamp>{UtcNow()}</Timestamp>
     <Version>1.0</Version>
     <MessageId>{messageId}</MessageId>
-    <netex:VehicleRef ref="{vehicleRef}" version="1.0"/>
+    <netex:VehicleRef ref="{vehicleRef}" />
     <DatedJourneyRef>
-        <netex:VehicleJourneyRef ref="{vehicleJourneyRef}" nameOfRefClass="VehicleJourney" version="1.0"/>
-        <netex:OperatingDayRef ref="{operatingDayRef}" nameOfRefClass="OperatingDay" version="1.0"/>
-        <netex:BlockRef ref="{blockRef}" nameOfRefClass="Block" version="1.0"/>
+        <netex:VehicleJourneyRef ref="{vehicleJourneyRef}" />
+        <netex:OperatingDayRef ref="{operatingDayRef}" />
+        <netex:BlockRef ref="{blockRef}" />
     </DatedJourneyRef>
-    <netex:JourneyPatternRef ref="{journeyPatternRef}" nameOfRefClass="JourneyPattern" version="1.0"/>
-    <Extensions/>
 </OperationalVehicleLogOnRequestStructure>
 """;
 
-    static string BuildOperationalLogOffXml(string messageId, string vehicleRef, string vehicleJourneyRef, string operatingDayRef, string blockRef, string journeyPatternRef) => $"""
+    static string BuildOperationalLogOffXml(string messageId, string vehicleRef, string vehicleJourneyRef, string operatingDayRef, string blockRef) =>
+    $"""
 <OperationalVehicleLogOffRequestStructure xmlns:netex="http://www.netex.org.uk/netex">
     <Timestamp>{UtcNow()}</Timestamp>
     <Version>1.0</Version>
     <MessageId>{messageId}</MessageId>
-    <netex:VehicleRef ref="{vehicleRef}" version="1.0"/>
+    <netex:VehicleRef ref="{vehicleRef}" />
     <DatedJourneyRef>
-        <VehicleJourneyRef ref="{vehicleJourneyRef}" nameOfRefClass="VehicleJourney" version="1.0"/>
-        <OperatingDayRef ref="{operatingDayRef}" nameOfRefClass="OperatingDay" version="1.0"/>
-        <BlockRef ref="{blockRef}" nameOfRefClass="Block" version="1.0"/>
+        <netex:VehicleJourneyRef ref="{vehicleJourneyRef}" />
+        <netex:OperatingDayRef ref="{operatingDayRef}" />
+        <netex:BlockRef ref="{blockRef}" />
     </DatedJourneyRef>
-    <netex:JourneyPatternRef ref="{journeyPatternRef}" nameOfRefClass="JourneyPattern" version="1.0"/>
-    <Extensions/>
 </OperationalVehicleLogOffRequestStructure>
 """;
 
