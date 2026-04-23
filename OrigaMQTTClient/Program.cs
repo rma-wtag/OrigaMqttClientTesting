@@ -3,23 +3,24 @@
 class Program
 {
     // === TEST CONFIGURATION ===
-    const string CountryCode = "DE";
-    const string OrgCode = "MVG";
-    const string ItcsId = "ITCS001";
-    const string TestVehicleId = "de:mvg:1234";
-    const string TestDriverId = "de:mvg:abc";
+    const string CountryCode = "de";
+    const string OrgCode = "mvg";
+    const string ItcsId = "123";
+    const string TestVehicleId = "de:mvg:125";
+    const string TestDriverId = "de:mvg:abe";
 
     static async Task Main(string[] args)
     {
         var factory = new MqttClientFactory();
+        var client = factory.CreateMqttClient();
 
         var options = new MqttClientOptionsBuilder()
             .WithTcpServer("localhost", 1883)
-            .WithClientId($"test-drive-{Guid.NewGuid()}")
+            // Add your EMQX username and password here
+            .WithCredentials("origadispo-client", "!WT7FExqGp9R@-6TjARE")
+            .WithClientId($"origadispo-client")
             .WithCleanSession(false) // Drive: cleanSession=false to not miss live notifications
             .Build();
-
-        var client = factory.CreateMqttClient();
 
         client.ApplicationMessageReceivedAsync += e =>
         {
@@ -64,9 +65,10 @@ class Program
                 .WithAtLeastOnceQoS())
             .Build();
 
+
         await client.SubscribeAsync(subscribeOptions, CancellationToken.None);
         Console.WriteLine("✅ Subscribed to VehicleInbox response topics, LiveAnnouncement, and Notification");
-
+        Console.WriteLine($"topic : IoM/1.0/DataVersion/+/Inbox/ItcsInbox/Country/{CountryCode}/+/Organisation/{OrgCode}/+/ItcsId/{ItcsId}/NotificationData");
         // --- TEST FLOW ---
         Console.WriteLine("\n🚀 STARTING TESTS...\n");
 
@@ -82,8 +84,8 @@ class Program
         //await SendLogOffRequest(client);
         //await Task.Delay(1000);
 
-        //await SendOperationalLogOnRequest(client);
-        //await Task.Delay(1000);
+        await SendOperationalLogOnRequest(client);
+        await Task.Delay(1000);
 
         //await SendOperationalLogOffRequest(client);
         //await Task.Delay(1000);
@@ -91,8 +93,8 @@ class Program
         //await SendPredefinedMessageRequest(client);
         //await Task.Delay(1000);
 
-        await SendGnssPhysicalPositionRequest(client);
-        await Task.Delay(1000);
+        //await SendGnssPhysicalPositionRequest(client);
+        //await Task.Delay(1000);
 
         //await SendDistressCallRequest(client);
         //await Task.Delay(1000);
@@ -144,7 +146,7 @@ class Program
         var payload = BuildTechnicalLogOnXml(
             messageId: messageId,
             vehicleRef: TestVehicleId,
-            obuId: "onboard-unit-id-124",
+            obuId: "onboard-unit-id-125",
             serialNumber: "10-1122",
             softwareVersion: "1.1.115",
             deviceName: "Origa-OBU-Terminal-A",
@@ -193,14 +195,13 @@ class Program
         // Ensure your BuildItcsInboxTopic generates the correct topic for LogOn
         var topic = BuildItcsInboxTopic(messageId, "OperationalVehicleLogOnRequestData");
 
-        string vehicleRef = "de:mvg:1234";
-        string vehicleJourneyRef = "1008017";
+        string vehicleJourneyRef = "1026017";
         string operatingDayRef = "2022-10-03";
-        string blockRef = "B-20531";
+        string blockRef = "B-20932";
 
         await PublishAsync(client, topic, BuildOperationalLogOnXml(
             messageId,
-            vehicleRef,
+            TestVehicleId,
             vehicleJourneyRef,
             operatingDayRef,
             blockRef), qos: 1);
@@ -265,6 +266,8 @@ class Program
         await PublishAsync(client, topic, BuildDistressCallRequestXml(messageId), qos: 1);
         Console.WriteLine($"✅ Distress Call Request Sent (MessageId/CorrelationId: {messageId})");
     }
+
+    //  ----- Notification Message Receive -----
 
     // ---------------- XML BUILDERS ----------------
     // MessageId is now generated ONCE and passed in — same value goes into both topic and payload
